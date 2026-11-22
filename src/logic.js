@@ -288,8 +288,8 @@
       .sort((a, b) => (b.to.w - b.from.w) - (a.to.w - a.from.w))
       .slice(0, 4)
       .map((p) => (p.to.w > p.from.w
-        ? `${p.name} ${fmtNum(p.from.w)} → ${fmtNum(p.to.w)} lb`
-        : `${p.name} ${p.fromReps} → ${p.toReps} total reps`));
+        ? `${p.name} ${fmtNum(p.from.w)} to ${fmtNum(p.to.w)} lb`
+        : `${p.name} ${p.fromReps} to ${p.toReps} total reps`));
     let prevBw = null;
     for (let w = week - 1; w >= 1; w--) {
       const c = checkins[`w${pad(w)}`];
@@ -304,16 +304,16 @@
     if (next > PLAN.WEEKS) return "Program complete.";
     if (isLightWeek(next)) {
       return tired
-        ? `Week ${next}: run the lighter week, 1–2 fewer sets on demanding exercises.`
-        : `Week ${next}: lighter week optional; keep full sets if recovery feels good.`;
+        ? `Week ${next}: run the lighter week with 1-2 fewer sets on demanding exercises.`
+        : `Week ${next}: lighter week is optional. Keep full sets if recovery feels good.`;
     }
-    if (tired) return "Keep loads, trim 1 set from accessories until readiness recovers.";
-    return "Keep progressing: build reps to the top of each range, then add weight.";
+    if (tired) return "Keep loads and trim 1 set from accessories until readiness recovers.";
+    return "Keep progressing. Build reps to the top of each range, then add weight.";
   }
 
   function checkinSheetRow(c) {
     const join = (a) => (Array.isArray(a) ? a.join(", ") : a || "");
-    const soreness = [join(c.soreness), c.note].filter(Boolean).join(" — ");
+    const soreness = [join(c.soreness), c.note].filter(Boolean).join(". ");
     return [c.bodyweight ?? "", c.sleep ?? "", c.readiness ?? "", c.stress ?? "", c.performance ?? "", c.wins || "", soreness, c.adjustment || ""];
   }
 

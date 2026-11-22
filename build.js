@@ -7,6 +7,7 @@ const out = process.argv[2] || path.join(__dirname, "dist", "index.html");
 const html = src("index.html")
   .replace("/*STYLES*/", () => src("styles.css"))
   .replace("/*PLAN*/", () => src("plan.js"))
+  .replace("/*ICONS*/", () => src("icons.js"))
   .replace("/*LOGIC*/", () => src("logic.js"))
   .replace("/*APP*/", () => src("app.js"));
 fs.mkdirSync(path.dirname(out), { recursive: true });

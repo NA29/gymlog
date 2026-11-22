@@ -180,7 +180,7 @@ test("check-in draft: readiness average, performance, wins, bodyweight", () => {
   const draft = L.checkinDraft(sessions, 2, { w01: { bodyweight: 182 } });
   assert.equal(draft.readiness, 8);
   assert.equal(draft.performance, 10);
-  assert.ok(draft.wins.includes("50 → 55 lb"));
+  assert.ok(draft.wins.includes("50 to 55 lb"));
   assert.equal(draft.bodyweight, 182);
   const first = L.checkinDraft(sessions, 1, {});
   assert.equal(first.performance, null);

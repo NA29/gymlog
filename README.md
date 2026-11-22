@@ -15,7 +15,7 @@ The artifact's database holds the record: `sessions/<wNN-sessionId>`, `checkins/
 ## Develop
 
 ```sh
-npm test               # logic tests (node:test, no dependencies)
+npm test               # logic + headless UI tests (node:test, no dependencies)
 node build.js [out]    # inline src/ into one page (default dist/index.html)
 ```
 
