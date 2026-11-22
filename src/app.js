@@ -18,7 +18,10 @@
     calMonth: null, calSel: null,
     timer: null, toast: null, sheetTest: null, confirm: null,
     startDate: null, // date chosen for a session not started yet
+    active: {}, // session key -> {i, j} of the set being edited
+    sound: true,
   };
+  try { S.sound = localStorage.getItem("gymlog-sound") !== "off"; } catch (e) { /* storage blocked */ }
   let db = null, mcp = null, needsRender = false, retryTimer = null, wakeLock = null;
   const inflight = {}; // paths with a sheet write running in this tab
   const app = document.getElementById("app");
@@ -282,7 +285,7 @@
     clearTimeout(tickTimer.t);
     if (!S.timer) return;
     const left = Math.round((S.timer.end - Date.now()) / 1000);
-    if (left <= 0 && !S.timer.buzzed) { S.timer.buzzed = true; try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* not allowed */ } }
+    if (left <= 0 && !S.timer.buzzed) { S.timer.buzzed = true; beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* not allowed */ } }
     if (left < -90) { S.timer = null; render(); return; }
     renderTimer();
     tickTimer.t = setTimeout(tickTimer, 250);
@@ -482,6 +485,7 @@
       const doneN = e.sets.filter((s) => s.done).length;
       const ring = doneN === e.sets.length && doneN > 0 ? `<span class="ring full">${I("check")}</span>` : `<span class="ring ${doneN ? "part" : ""} num">${doneN}/${e.sets.length}</span>`;
       const isOpen = i === open;
+      const act = isOpen ? activeSet(doc, open) : null;
       const sumLine = exSummary(e) || `${p.sets} × ${rng(p.range)}`;
       let body = "";
       if (isOpen) {
@@ -495,17 +499,11 @@
           <div class="advice">${advice}<p class="meta">${p.muscle}. Rest ${i === 0 ? "2-3 min" : "60-120 s"}.</p></div>
           <div class="sets">
             <div class="set-head"><span>Set</span><span>${kind.pairedDB ? "lb per dumbbell" : "lb"}</span><span>${kind.unilateral ? "Reps per side" : "Reps"}</span><span></span></div>
-            ${e.sets.map((s, j) => `
-              <div class="set ${s.done ? "done" : ""}">
-                <span class="n">${j + 1}</span>
-                <input class="field-num" id="w-${i}-${j}" type="number" inputmode="decimal" step="0.5" min="0" placeholder="0" value="${s.w == null ? "" : s.w}" data-i="${i}" data-j="${j}" data-f="w" aria-label="Set ${j + 1} weight">
-                <input class="field-num" id="r-${i}-${j}" type="number" inputmode="numeric" step="1" min="0" placeholder="0" value="${s.r == null ? "" : s.r}" data-i="${i}" data-j="${j}" data-f="r" aria-label="Set ${j + 1} reps">
-                <button class="tick" data-act="tick" data-i="${i}" data-j="${j}" aria-pressed="${s.done}" aria-label="Set ${j + 1} done">${I("check")}</button>
-              </div>`).join("")}
+            ${e.sets.map((s, j) => setRow(doc, i, j, act, last)).join("")}
           </div>
           <div class="ex-tools">
             <button class="btn small quiet" data-act="add-set" data-i="${i}">${I("plus")}Add set</button>
-            ${e.sets.length > 1 && !e.sets[e.sets.length - 1].done ? `<button class="btn small quiet" data-act="drop-set" data-i="${i}">${I("minus")}Remove set</button>` : ""}
+            ${e.sets.filter((x) => !x.done).length >= 2 ? `<button class="btn small quiet" data-act="tick-rest" data-i="${i}">${I("checks")}Tick remaining</button>` : e.sets.length > 1 && !e.sets[e.sets.length - 1].done ? `<button class="btn small quiet" data-act="drop-set" data-i="${i}">${I("minus")}Remove set</button>` : ""}
           </div>
           <label class="label"><span>Note</span><input class="text-in" id="note-${i}" data-note="${i}" placeholder="Substitution, machine setting, how it felt" value="${esc(e.note)}"></label>
         </div>`;
@@ -523,6 +521,39 @@
       parts.push(`<div class="danger-zone"><button class="btn small quiet" data-act="reopen" data-key="${key}">Mark as not done</button></div>`);
     }
     return parts.join("");
+  }
+
+  function activeSet(doc, open) {
+    if (open < 0 || !doc.ex[open]) return null;
+    const a = S.active[S.key];
+    if (a && a.i === open && doc.ex[a.i].sets[a.j]) return a;
+    const j = doc.ex[open].sets.findIndex((x) => !x.done);
+    return j >= 0 ? { i: open, j } : null;
+  }
+
+  // The set being edited gets steppers; the others show their values and
+  // become editable with a tap.
+  function setRow(doc, i, j, act, last) {
+    const s = doc.ex[i].sets[j];
+    const tick = `<button class="tick" data-act="tick" data-i="${i}" data-j="${j}" aria-pressed="${s.done}" aria-label="Set ${j + 1} done">${I("check")}</button>`;
+    const shown = (v) => (v == null ? "-" : num(v));
+    if (!(act && act.i === i && act.j === j)) {
+      return `<div class="set ${s.done ? "done" : ""}"><span class="n">${j + 1}</span>
+        <button class="field-static num" data-act="activate" data-i="${i}" data-j="${j}" aria-label="Edit set ${j + 1} weight">${shown(s.w)}</button>
+        <button class="field-static num" data-act="activate" data-i="${i}" data-j="${j}" aria-label="Edit set ${j + 1} reps">${shown(s.r)}</button>${tick}</div>`;
+    }
+    const stepper = (f) => {
+      const what = f === "w" ? `${L.WEIGHT_STEP} lb` : "1 rep";
+      const v = s[f];
+      return `<div class="stepper">
+        <button class="step" data-step="-1" data-f="${f}" data-i="${i}" data-j="${j}" aria-label="${what} less">${I("minus")}</button>
+        <input class="field-num" id="${f}-${i}-${j}" type="text" inputmode="${f === "w" ? "decimal" : "numeric"}" autocomplete="off" enterkeyhint="done" placeholder="0" value="${v == null ? "" : num(v)}" data-i="${i}" data-j="${j}" data-f="${f}" aria-label="Set ${j + 1} ${f === "w" ? "weight" : "reps"}">
+        <button class="step" data-step="1" data-f="${f}" data-i="${i}" data-j="${j}" aria-label="${what} more">${I("plus")}</button>
+      </div>`;
+    };
+    const prev = last && last.sets[j];
+    return `<div class="set active ${s.done ? "done" : ""}"><span class="n">${j + 1}</span>${stepper("w")}${stepper("r")}${tick}</div>
+      ${prev ? `<p class="set-last">Last time ${num(prev.r)} reps at ${num(prev.w)}</p>` : ""}`;
   }
 
   function sessionBar() {
@@ -715,6 +746,7 @@
     const txt = `${left < 0 ? "+" : ""}${Math.floor(a / 60)}:${L.pad(a % 60)}`;
     const pct = Math.max(0, Math.min(1, 1 - left / S.timer.total));
     slot.innerHTML = `<div class="timer ${left <= 0 ? "over" : ""}" role="timer"><span class="clock">${txt}</span><span class="what">${left <= 0 ? "Rest is over" : "Rest, then " + esc(S.timer.what)}</span><span class="track"><i style="transform:scaleX(${pct})"></i></span></div>
+      <button class="icon-btn" data-act="sound" aria-pressed="${S.sound}" aria-label="${S.sound ? "Mute" : "Turn on"} the rest alert">${I(S.sound ? "speaker-high" : "speaker-slash")}</button>
       <button class="btn" data-act="timer-add">+30 s</button><button class="btn primary" data-act="timer-skip">${left <= 0 ? "Done" : "Skip"}</button>`;
   }
   function renderToast() {
@@ -730,6 +762,13 @@
   }
 
   document.addEventListener("click", (ev) => {
+    const st = ev.target.closest && ev.target.closest("[data-step]");
+    if (st) {
+      // Pointer presses are handled on pointerdown (with hold-to-repeat);
+      // a click without a pointer (keyboard) steps once here.
+      if (!ev.detail) { stepOnce(st); touch(); render(); }
+      return;
+    }
     const el = ev.target.closest && ev.target.closest("[data-act]");
     if (!el || !(app.contains(el))) return;
     const act = el.dataset.act;
@@ -762,24 +801,38 @@
       case "toggle-ex": S.open[S.key] = openIndex(doc) === i ? -1 : i; render(); if (S.open[S.key] === i) scrollToEx(i); break;
       case "tick": {
         const ex = doc.ex[i], s = ex.sets[j];
-        if (!s.done && (s.w == null || s.r == null || s.r <= 0)) { toast("Enter the weight and reps first"); break; }
+        if (!s.done && (s.w == null || s.r == null || s.r <= 0)) { S.active[S.key] = { i, j }; toast("Enter the weight and reps first"); render(); break; }
         s.done = !s.done;
-        // Carry the weight forward to later sets that are still empty.
-        if (s.done) for (let k = j + 1; k < ex.sets.length; k++) { const n = ex.sets[k]; if (!n.done && n.w == null) n.w = s.w; }
+        if (s.done) L.carryForward(ex.sets, j);
         touch();
-        if (s.done && !L.isDone(doc)) {
-          const exDone = ex.sets.every((x) => x.done);
-          const nextEx = doc.ex.findIndex((e) => e.sets.some((x) => !x.done));
-          if (exDone && nextEx >= 0) { S.open[S.key] = nextEx; }
-          if (nextEx >= 0 && isPastDay(doc.date)) {
-            if (exDone) scrollToEx(nextEx);
-            render();
-          } else if (nextEx >= 0) {
-            const upNext = exDone ? doc.ex[nextEx].name : `set ${j + 2}`;
-            startTimer(i === 0 ? 150 : 90, upNext);
-            if (exDone) scrollToEx(nextEx);
-          } else { S.timer = null; render(); }
-        } else render();
+        if (!s.done || L.isDone(doc)) { S.active[S.key] = { i, j }; render(); break; }
+        const nxt = L.nextOpenSet(doc.ex, i, j);
+        if (!nxt) { S.timer = null; delete S.active[S.key]; render(); toast("All sets done. Finish when you're ready."); break; }
+        S.active[S.key] = nxt;
+        const moved = nxt.i !== i;
+        if (moved) S.open[S.key] = nxt.i;
+        if (isPastDay(doc.date)) render();
+        else { ensureAudio(); startTimer(i === 0 ? 150 : 90, moved ? doc.ex[nxt.i].name : `set ${nxt.j + 1}`); }
+        if (moved) scrollToEx(nxt.i);
+        break;
+      }
+      case "tick-rest": {
+        const ex = doc.ex[i];
+        const missing = ex.sets.some((x) => !x.done && (x.w == null || x.r == null || x.r <= 0));
+        if (missing) { toast("Some sets have no weight or reps yet"); break; }
+        ex.sets.forEach((x) => { x.done = true; });
+        touch();
+        const nxt = L.nextOpenSet(doc.ex, i, ex.sets.length - 1);
+        if (nxt) { S.active[S.key] = nxt; S.open[S.key] = nxt.i; render(); scrollToEx(nxt.i); }
+        else { delete S.active[S.key]; render(); }
+        break;
+      }
+      case "activate": S.active[S.key] = { i, j }; render(); break;
+      case "sound": {
+        S.sound = !S.sound;
+        try { localStorage.setItem("gymlog-sound", S.sound ? "on" : "off"); } catch (e) { /* storage blocked */ }
+        if (S.sound) ensureAudio();
+        renderTimer();
         break;
       }
       case "add-set": {
@@ -878,9 +931,7 @@
       S.startDate = el.value; render();
     } else if (S.view === "session" && el.dataset.f) {
       const doc = sessionDoc();
-      const s = doc.ex[Number(el.dataset.i)].sets[Number(el.dataset.j)];
-      const v = el.value === "" ? null : Math.max(0, Number(el.value));
-      s[el.dataset.f] = Number.isFinite(v) ? v : null;
+      L.setValue(doc.ex[Number(el.dataset.i)].sets, Number(el.dataset.j), el.dataset.f, L.parseNum(el.value));
       touch(); scheduleRender();
     } else if (S.view === "session" && el.dataset.note != null) {
       sessionDoc().ex[Number(el.dataset.note)].note = el.value.trim();
@@ -911,6 +962,68 @@
     for (const s of L.SEQ) if (L.isDone(S.sessions[s.key])) await syncSession(s.key);
     for (const id of Object.keys(S.checkins).sort()) await syncCheckin(id);
     toast("Resync finished");
+  }
+
+  // ---------- steppers, typing, sound ----------
+  let hold = null;
+  function stepOnce(b) {
+    const doc = sessionDoc();
+    if (!doc) return;
+    const i = Number(b.dataset.i), j = Number(b.dataset.j), f = b.dataset.f;
+    const v = L.step(doc.ex[i].sets, j, f, Number(b.dataset.step));
+    const input = document.getElementById(`${f}-${i}-${j}`);
+    if (input) input.value = num(v);
+  }
+  function stopHold() {
+    if (!hold) return false;
+    clearTimeout(hold.t);
+    hold = null;
+    return true;
+  }
+  app.addEventListener("pointerdown", (ev) => {
+    const b = ev.target.closest && ev.target.closest("[data-step]");
+    if (!b) return;
+    ev.preventDefault();
+    stopHold();
+    stepOnce(b);
+    hold = { t: 0 };
+    const again = () => { if (!hold) return; stepOnce(b); hold.t = setTimeout(again, 90); };
+    hold.t = setTimeout(again, 450);
+  });
+  const endHold = () => { if (stopHold()) { touch(); render(); } };
+  document.addEventListener("pointerup", endHold);
+  document.addEventListener("pointercancel", endHold);
+
+  // Tapping a number selects it, so typing replaces it.
+  app.addEventListener("focusin", (ev) => {
+    const t = ev.target;
+    if (t && t.classList && t.classList.contains("field-num")) setTimeout(() => { try { t.select(); } catch (e) { /* not selectable */ } }, 0);
+  });
+
+  let audio = null;
+  function ensureAudio() {
+    if (!S.sound) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!audio && AC) audio = new AC();
+      if (audio && audio.state === "suspended") audio.resume();
+    } catch (e) { audio = null; }
+  }
+  function beep() {
+    if (!S.sound || !audio) return;
+    try {
+      const t0 = audio.currentTime;
+      [0, 0.2, 0.4].forEach((dt, k) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = "sine";
+        o.frequency.value = k === 2 ? 1320 : 880;
+        g.gain.setValueAtTime(0.0001, t0 + dt);
+        g.gain.exponentialRampToValueAtTime(0.3, t0 + dt + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.15);
+        o.connect(g); g.connect(audio.destination);
+        o.start(t0 + dt); o.stop(t0 + dt + 0.17);
+      });
+    } catch (e) { /* audio unavailable */ }
   }
 
   // ---------- boot ----------

@@ -139,17 +139,21 @@
     return Number.isInteger(x) ? String(x) : String(Math.round(x * 10) / 10);
   }
 
+  // Pre-filled targets: last time's weight, and one more rep than last time
+  // (capped at the top of the range), so a set that goes to plan is one tap.
+  // After a session at the top of the range: heavier weight, bottom of range.
   function newSessionDoc(week, sid, sessions, opts = {}) {
     const light = !!opts.light;
     const key = sessionKey(week, sid);
     const ex = prescription(week, sid, light).map((p) => {
       const sug = suggest(p, lastPerformance(sessions, p.name, key));
+      const { hi } = repBounds(p.range);
       const sets = [];
       for (let i = 0; i < p.sets; i++) {
-        const prev = sug.last && sug.last.sets[i];
+        const prev = sug.last && (sug.last.sets[i] || sug.last.sets[sug.last.sets.length - 1]);
         sets.push({
           w: sug.weight != null ? sug.weight : null,
-          r: sug.progress ? sug.reps : prev ? prev.r : sug.reps,
+          r: sug.progress ? sug.reps : prev ? Math.min(hi || Infinity, prev.r + 1) : sug.reps,
           done: false,
         });
       }
@@ -177,6 +181,61 @@
       return { ...e, sets };
     });
     return { ...doc, light, ex };
+  }
+
+  // ---- Editing sets ----------------------------------------------------------
+  // "Touched" sets hold numbers the athlete entered; everything else is a
+  // suggestion the app may overwrite.
+  const WEIGHT_STEP = 5;
+
+  function parseNum(v) {
+    if (v == null) return null;
+    const n = parseFloat(String(v).trim().replace(",", "."));
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+  }
+
+  // Set a value on set j. A weight change flows down to later sets that
+  // are neither ticked nor touched, since the load usually stays the same.
+  function setValue(sets, j, f, value) {
+    const s = sets[j];
+    s[f] = value;
+    s.touched = true;
+    if (f === "w") {
+      for (let k = j + 1; k < sets.length; k++) {
+        if (!sets[k].done && !sets[k].touched) sets[k].w = value;
+      }
+    }
+  }
+
+  function step(sets, j, f, dir) {
+    const cur = sets[j][f];
+    const d = f === "w" ? WEIGHT_STEP : 1;
+    const next = Math.max(0, Math.round(((cur == null ? 0 : cur) + dir * d) * 100) / 100);
+    setValue(sets, j, f, next);
+    return next;
+  }
+
+  // Ticking a set copies what was actually done into the following sets
+  // that haven't been edited, so repeating a set is one tap each time.
+  function carryForward(sets, j) {
+    const s = sets[j];
+    for (let k = j + 1; k < sets.length; k++) {
+      const n = sets[k];
+      if (n.done || n.touched) continue;
+      n.w = s.w;
+      n.r = s.r;
+    }
+  }
+
+  // Next unticked set after (i, j), moving on to later exercises.
+  function nextOpenSet(ex, i, j) {
+    for (let a = i; a < ex.length; a++) {
+      for (let b = a === i ? j + 1 : 0; b < ex[a].sets.length; b++) if (!ex[a].sets[b].done) return { i: a, j: b };
+    }
+    for (let a = 0; a < ex.length; a++) {
+      for (let b = 0; b < ex[a].sets.length; b++) if (!ex[a].sets[b].done) return { i: a, j: b };
+    }
+    return null;
   }
 
   // ---- Google Sheet layout -------------------------------------------------
@@ -350,5 +409,6 @@
     lastPerformance, suggest, describeSets, fmtNum, newSessionDoc, applyLight,
     findSessionRows, sheetRowsForSession, rowRuns, checkinRow, weekSessions, weekComplete,
     weekProgress, checkinDraft, adjustmentFor, checkinSheetRow, localDate, daysBetween, todayStatus, byWorkoutDate,
+    WEIGHT_STEP, parseNum, setValue, step, carryForward, nextOpenSet,
   };
 });

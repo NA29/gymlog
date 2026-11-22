@@ -66,7 +66,7 @@ function boot() {
   const html = () => slots.app.innerHTML;
   return {
     ctx, store, calls, html,
-    click: (dataset) => docListeners.click({ target: { closest: () => ({ dataset }) } }),
+    click: (dataset) => docListeners.click({ target: { closest: (sel) => (sel === "[data-step]" ? (dataset.step ? { dataset } : null) : { dataset }) } }),
     change: (dataset, value) => appListeners.change({ target: { dataset, value, type: "number" } }),
     nav: (h) => { ctx.location.hash = h; winListeners.hashchange(); },
   };
@@ -180,4 +180,39 @@ test("calendar logs the next session on a past day", async () => {
   t.click({ act: "start", key: "w01-pushA" });
   await wait(5);
   assert.equal(t.store["sessions/w01-pushA"].date, ds);
+});
+
+test("one-tap logging: steppers, carry-forward and tick remaining", async () => {
+  const t = boot();
+  await wait(20);
+  t.nav("#s-w01-pushA");
+  t.click({ act: "start", key: "w01-pushA" });
+  await wait(5);
+  const doc = () => t.store["sessions/w01-pushA"];
+  // The first set of the open exercise has steppers.
+  assert.match(t.html(), /data-step="-1" data-f="w" data-i="0" data-j="0"/);
+
+  // First time on this exercise: type 25, step down once to 20.
+  t.change({ f: "w", i: 0, j: 0 }, "25");
+  t.click({ step: "-1", f: "w", i: "0", j: "0" });
+  await wait(5);
+  assert.equal(doc().ex[0].sets[0].w, 20);
+  // The weight flowed down to the untouched sets.
+  assert.deepEqual(doc().ex[0].sets.map((s) => s.w), [20, 20, 20]);
+
+  // Did 10 reps instead of the 8 target: two taps on +.
+  t.click({ step: "1", f: "r", i: "0", j: "0" });
+  t.click({ step: "1", f: "r", i: "0", j: "0" });
+  t.click({ act: "tick", i: "0", j: "0" });
+  await wait(5);
+  // Set 2 is now a copy of set 1 and is the one being edited.
+  assert.deepEqual([doc().ex[0].sets[1].w, doc().ex[0].sets[1].r], [20, 10]);
+  assert.match(t.html(), /data-step="-1" data-f="w" data-i="0" data-j="1"/);
+  t.click({ act: "timer-skip" });
+
+  // Tick remaining finishes the exercise and opens the next one.
+  t.click({ act: "tick-rest", i: "0" });
+  await wait(5);
+  assert.ok(doc().ex[0].sets.every((s) => s.done));
+  assert.match(t.html(), /aria-expanded="true"[^>]*>[\s\S]*?Machine Chest Press/);
 });

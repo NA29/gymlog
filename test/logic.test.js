@@ -79,7 +79,8 @@ test("progression: top of range on every set adds weight, else repeat", () => {
 test("new session pre-fills from last time, across blocks", () => {
   const sessions = { "w01-pushA": done(1, "pushA", [{ name: "Incline Dumbbell Press", sets: [{ w: 22.5, r: 12, done: true }, { w: 22.5, r: 10, done: true }, { w: 22.5, r: 9, done: true }] }]) };
   const doc = L.newSessionDoc(2, "pushA", sessions, { date: "2026-11-22" });
-  assert.deepEqual(doc.ex[0].sets.map((s) => [s.w, s.r]), [[22.5, 12], [22.5, 10], [22.5, 9]]);
+  // Same weight; one more rep than last time per set, capped at the top of the range (12).
+  assert.deepEqual(doc.ex[0].sets.map((s) => [s.w, s.r]), [[22.5, 12], [22.5, 11], [22.5, 10]]);
   assert.equal(doc.ex[1].sets[0].w, null);
   assert.equal(doc.ex[1].sets[0].r, 8);
   // Block 2 Push A also opens with Incline Dumbbell Press: still found.
@@ -216,4 +217,42 @@ test("backdated sessions count on the day they happened", () => {
   assert.equal(L.todayStatus(s2, "2026-11-22").kind, "train");
   const order = [sessions["w01-legsA"], sessions["w01-pullA"]].sort(L.byWorkoutDate).map((d) => d.sid);
   assert.deepEqual(order, ["pullA", "legsA"]);
+});
+
+test("typing accepts decimal commas and rejects junk", () => {
+  assert.equal(L.parseNum("22,5"), 22.5);
+  assert.equal(L.parseNum(" 40 "), 40);
+  assert.equal(L.parseNum(""), null);
+  assert.equal(L.parseNum("abc"), null);
+  assert.equal(L.parseNum("-5"), null);
+});
+
+test("stepping weight flows down to untouched sets only", () => {
+  const sets = [{ w: 40, r: 10, done: false }, { w: 40, r: 10, done: false }, { w: 40, r: 9, done: false }];
+  sets[2].touched = true;
+  assert.equal(L.step(sets, 0, "w", -1), 35);
+  assert.deepEqual(sets.map((s) => s.w), [35, 35, 40]);
+  assert.equal(L.step(sets, 0, "r", -1), 9);
+  assert.deepEqual(sets.map((s) => s.r), [9, 10, 9]); // reps don't flow down
+  assert.equal(L.step([{ w: null, r: null }], 0, "w", 1), 5);
+  assert.equal(L.step([{ w: 0, r: 0 }], 0, "r", -1), 0);
+});
+
+test("ticking a set copies it into the following untouched sets", () => {
+  const sets = [{ w: 50, r: 8, done: true }, { w: 45, r: 10, done: false }, { w: 45, r: 9, done: false, touched: true }, { w: 45, r: 9, done: true }];
+  L.carryForward(sets, 0);
+  assert.deepEqual(sets.map((s) => [s.w, s.r]), [[50, 8], [50, 8], [45, 9], [45, 9]]);
+});
+
+test("next open set walks forward, then wraps to anything skipped", () => {
+  const ex = [
+    { sets: [{ done: true }, { done: false }] },
+    { sets: [{ done: false }] },
+  ];
+  assert.deepEqual(L.nextOpenSet(ex, 0, 0), { i: 0, j: 1 });
+  assert.deepEqual(L.nextOpenSet(ex, 0, 1), { i: 1, j: 0 });
+  ex[1].sets[0].done = true;
+  assert.deepEqual(L.nextOpenSet(ex, 1, 0), { i: 0, j: 1 });
+  ex[0].sets[1].done = true;
+  assert.equal(L.nextOpenSet(ex, 1, 0), null);
 });
