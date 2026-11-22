@@ -17,6 +17,7 @@
     open: {}, // session key -> index of the expanded exercise
     calMonth: null, calSel: null,
     timer: null, toast: null, sheetTest: null, confirm: null,
+    startDate: null, // date chosen for a session not started yet
   };
   let db = null, mcp = null, needsRender = false, retryTimer = null, wakeLock = null;
   const inflight = {}; // paths with a sheet write running in this tab
@@ -34,6 +35,14 @@
   const fmtDate = (d, opts = { month: "short", day: "numeric" }) => (d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, opts) : "");
   const label = (sid) => L.sessionMeta(sid).label;
   const seqIndex = (key) => L.ORDER[key] + 1;
+  const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return L.localDate(d); };
+  const isPastDay = (ds) => !!ds && ds < today();
+  function dayName(ds) {
+    if (!ds || ds === today()) return "Today";
+    if (ds === yesterday()) return "Yesterday";
+    return fmtDate(ds, { weekday: "long", month: "long", day: "numeric" });
+  }
+  const validDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "") && v <= today();
 
   function toast(msg) {
     S.toast = msg; renderToast();
@@ -295,6 +304,7 @@
     else if ((m = /^ci-w(\d\d)$/.exec(h))) { S.view = "checkin"; S.ciWeek = Number(m[1]); S.ciDraft = null; }
     else if (["plan", "calendar", "sheet"].includes(h)) S.view = h;
     else S.view = "today";
+    if (S.view !== "session") S.startDate = null;
     keepAwake(S.view === "session");
     render();
     window.scrollTo(0, 0);
@@ -383,7 +393,7 @@
     }
 
     const recent = L.SEQ.map((s) => [s.key, S.sessions[s.key]]).filter(([, d]) => L.isDone(d))
-      .sort((a, b) => (b[1].completedAt || "").localeCompare(a[1].completedAt || "")).slice(0, 4);
+      .sort((a, b) => L.byWorkoutDate(b[1], a[1])).slice(0, 4);
     if (recent.length) {
       parts.push(`<section><p class="group-label">Recent</p><div class="group">${recent.map(([k, d]) => `
         <a class="row" href="#s-${k}"><span class="grow"><span>${label(d.sid)}</span><span class="meta">Week ${d.week}${d.date ? ", " + fmtDate(d.date) : ""}</span></span><span class="end">${syncIcon(d)}${I("caret-right")}</span></a>`).join("")}</div></section>`);
@@ -418,14 +428,26 @@
       <section class="head">
         <p class="kicker">Week ${meta.week}, block ${block.n}</p>
         <h1>${label(meta.sid)}</h1>
-        ${doc && doc.date ? `<p class="meta">${fmtDate(doc.date, { weekday: "long", month: "long", day: "numeric" })}${doc.readiness != null ? `. Readiness ${doc.readiness}` : ""}</p>` : ""}
+        ${doc ? `<div class="date-line">
+          <label class="date-pick">${I("calendar-blank")}<span>${dayName(doc.date)}</span>${I("caret-down")}<input type="date" id="session-date" max="${today()}" value="${doc.date || today()}" aria-label="Workout date"></label>
+          ${doc.readiness != null ? `<span class="meta">Readiness ${doc.readiness}</span>` : ""}
+        </div>` : ""}
       </section>`;
 
     if (!doc) {
       const pres = L.prescription(meta.week, meta.sid, false);
       const next = L.nextSession(S.sessions);
       const outOfOrder = next && next.key !== key;
+      const sd = S.startDate || today();
+      const other = sd !== today() && sd !== yesterday();
       return head + notice() + `
+        <section><p class="group-label">When did you train?</p>
+          <div class="chips">
+            <button class="chip" aria-pressed="${sd === today()}" data-act="start-date" data-d="${today()}">Today</button>
+            <button class="chip" aria-pressed="${sd === yesterday()}" data-act="start-date" data-d="${yesterday()}">Yesterday</button>
+            <label class="chip date-chip" aria-pressed="${other}">${I("calendar-blank")}<span>${other ? fmtDate(sd, { weekday: "short", month: "short", day: "numeric" }) : "Earlier"}</span><input type="date" id="start-date-other" max="${today()}" value="${sd}" aria-label="Pick another day"></label>
+          </div>
+        </section>
         ${outOfOrder ? `<p class="hint-line">${I("squares-four")}<span>Out of order: ${label(next.sid)}, week ${next.week} stays next in the plan.</span></p>` : ""}
         <section><div class="group">${pres.map((e) => {
           const last = L.lastPerformance(S.sessions, e.name, key);
@@ -506,7 +528,11 @@
   function sessionBar() {
     const doc = S.sessions[S.key];
     const meta = L.parseKey(S.key);
-    if (!doc) return `<div class="bar"><div class="bar-inner"><button class="btn primary block" data-act="start" data-key="${S.key}">Start ${label(meta.sid)}</button></div></div>`;
+    if (!doc) {
+      const sd = S.startDate || today();
+      const txt = sd === today() ? `Start ${label(meta.sid)}` : `Log ${label(meta.sid)} for ${sd === yesterday() ? "yesterday" : fmtDate(sd)}`;
+      return `<div class="bar"><div class="bar-inner"><button class="btn primary block" data-act="start" data-key="${S.key}">${txt}</button></div></div>`;
+    }
     if (S.timer) return `<div class="bar"><div class="bar-inner" id="timer-slot"></div></div>`;
     if (L.isDone(doc)) return "";
     const total = doc.ex.reduce((a, e) => a + e.sets.length, 0);
@@ -563,16 +589,26 @@
       const ds = `${m.y}-${L.pad(m.m + 1)}-${L.pad(d)}`;
       const list = byDate[ds] || [];
       const cls = ["day", ds === t ? "today" : "", list.length ? "has" : "", list.length && !list.every(([, x]) => L.isDone(x)) ? "ip" : "", S.calSel === ds ? "sel" : ""].join(" ");
-      cells.push(`<button class="${cls}" data-act="cal-day" data-d="${ds}" ${list.length ? "" : "disabled"} aria-label="${fmtDate(ds, { month: "long", day: "numeric" })}${list.length ? ", " + list.map(([, x]) => label(x.sid)).join(", ") : ""}"><span class="d">${d}</span>${list.map(([, x]) => `<span class="tag">${label(x.sid)}</span>`).join("")}</button>`);
+      cells.push(`<button class="${cls}" data-act="cal-day" data-d="${ds}" ${ds > t ? "disabled" : ""} aria-label="${fmtDate(ds, { month: "long", day: "numeric" })}${list.length ? ", " + list.map(([, x]) => label(x.sid)).join(", ") : ""}"><span class="d">${d}</span>${list.map(([, x]) => `<span class="tag">${label(x.sid)}</span>`).join("")}</button>`);
     }
     const sel = S.calSel && byDate[S.calSel];
     const monthName = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
     const trained = Object.keys(byDate).filter((d) => d.startsWith(`${m.y}-${L.pad(m.m + 1)}`)).length;
     return `${notice()}<section class="head">
         <div class="cal-head"><h1>${esc(monthName)}</h1><div style="display:flex"><button class="icon-btn" data-act="cal-prev" aria-label="Previous month">${I("caret-left")}</button><button class="icon-btn" data-act="cal-next" aria-label="Next month">${I("caret-right")}</button></div></div>
-        <p class="sub">${trained ? `${trained} training ${trained === 1 ? "day" : "days"} this month` : "No training logged this month"}</p></section>
+        <p class="sub">${trained ? `${trained} training ${trained === 1 ? "day" : "days"} this month.` : "No training logged this month."} Tap a past day to log a session you missed.</p></section>
       <div class="cal">${cells.join("")}</div>
-      ${sel ? `<section><p class="group-label">${fmtDate(S.calSel, { weekday: "long", month: "long", day: "numeric" })}</p><div class="group">${sel.map(([k, x]) => `<a class="row" href="#s-${k}"><span class="grow"><span>${label(x.sid)}</span><span class="meta">Week ${x.week}</span></span><span class="end">${syncIcon(x)}${I("caret-right")}</span></a>`).join("")}</div></section>` : ""}`;
+      ${S.calSel ? calDay(S.calSel, sel) : ""}`;
+  }
+
+  function calDay(ds, list) {
+    const next = L.nextSession(S.sessions);
+    const rows = (list || []).map(([k, x]) => `<a class="row" href="#s-${k}"><span class="grow"><span>${label(x.sid)}</span><span class="meta">Week ${x.week}</span></span><span class="end">${syncIcon(x)}${I("caret-right")}</span></a>`);
+    if (next) {
+      const started = S.sessions[next.key];
+      rows.push(`<div class="row"><span class="grow"><span>${list && list.length ? "Add another session" : "Nothing logged"}</span><span class="meta">${started ? `Move your started ${label(next.sid)} to this day.` : `Log ${label(next.sid)}, week ${next.week}, on this day.`}</span></span><button class="btn small" data-act="log-on" data-d="${ds}">${started ? "Move here" : "Log " + label(next.sid)}</button></div>`);
+    }
+    return `<section><p class="group-label">${dayName(ds)}</p><div class="group">${rows.join("")}</div></section>`;
   }
 
   // ---------- Check-in ----------
@@ -705,10 +741,21 @@
       case "start": {
         const { week, sid } = L.parseKey(el.dataset.key);
         const lightBox = document.getElementById("light-start");
-        S.sessions[el.dataset.key] = L.newSessionDoc(week, sid, S.sessions, { date: today(), now: nowIso(), light: !!(lightBox && lightBox.checked) });
+        S.sessions[el.dataset.key] = L.newSessionDoc(week, sid, S.sessions, { date: S.startDate || today(), now: nowIso(), light: !!(lightBox && lightBox.checked) });
+        S.startDate = null;
         delete S.open[el.dataset.key];
         save("sessions/" + el.dataset.key);
         render();
+        break;
+      }
+      case "start-date": S.startDate = el.dataset.d; render(); break;
+      case "log-on": {
+        const next = L.nextSession(S.sessions);
+        if (!next || !validDay(el.dataset.d)) break;
+        const started = S.sessions[next.key];
+        if (started) { started.date = el.dataset.d; save("sessions/" + next.key); }
+        S.startDate = el.dataset.d;
+        go("s-" + next.key);
         break;
       }
       case "ready": doc.readiness = Number(el.dataset.n); touch(); render(); break;
@@ -724,7 +771,10 @@
           const exDone = ex.sets.every((x) => x.done);
           const nextEx = doc.ex.findIndex((e) => e.sets.some((x) => !x.done));
           if (exDone && nextEx >= 0) { S.open[S.key] = nextEx; }
-          if (nextEx >= 0) {
+          if (nextEx >= 0 && isPastDay(doc.date)) {
+            if (exDone) scrollToEx(nextEx);
+            render();
+          } else if (nextEx >= 0) {
             const upNext = exDone ? doc.ex[nextEx].name : `set ${j + 2}`;
             startTimer(i === 0 ? 150 : 90, upNext);
             if (exDone) scrollToEx(nextEx);
@@ -816,7 +866,17 @@
 
   app.addEventListener("change", (ev) => {
     const el = ev.target;
-    if (S.view === "session" && el.dataset.f) {
+    if (el.id === "session-date") {
+      if (!validDay(el.value)) { toast("Pick today or an earlier day"); render(); return; }
+      sessionDoc().date = el.value; // the sheet has no dates, so this needs no resync
+      save("sessions/" + S.key);
+      const n = dayName(el.value);
+      toast("Moved to " + (n === "Today" || n === "Yesterday" ? n.toLowerCase() : n));
+      render();
+    } else if (el.id === "start-date-other") {
+      if (!validDay(el.value)) { toast("Pick today or an earlier day"); render(); return; }
+      S.startDate = el.value; render();
+    } else if (S.view === "session" && el.dataset.f) {
       const doc = sessionDoc();
       const s = doc.ex[Number(el.dataset.i)].sets[Number(el.dataset.j)];
       const v = el.value === "" ? null : Math.max(0, Number(el.value));

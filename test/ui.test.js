@@ -136,3 +136,48 @@ test("no em or en dashes in anything the app renders", async () => {
     assert.doesNotMatch(t.html().replace(/<svg[\s\S]*?<\/svg>/g, ""), /[—–]/, h);
   }
 });
+
+test("log a forgotten session for yesterday", async () => {
+  const t = boot();
+  await wait(20);
+  const L = t.ctx.GymLogic;
+  const d = new Date(); d.setDate(d.getDate() - 1);
+  const yday = L.localDate(d);
+
+  t.nav("#s-w01-pushA");
+  t.click({ act: "start-date", d: yday });
+  assert.match(t.html(), /Log Push A for yesterday/);
+  t.click({ act: "start", key: "w01-pushA" });
+  await wait(5);
+  const doc = t.store["sessions/w01-pushA"];
+  assert.equal(doc.date, yday);
+  assert.match(t.html(), /Yesterday/);
+
+  // Backfilling: ticking a set doesn't start the rest timer.
+  t.change({ f: "w", i: 0, j: 0 }, "20");
+  t.click({ act: "tick", i: "0", j: "0" });
+  assert.doesNotMatch(t.html(), /role="timer"/);
+
+  // Moving a session to another day keeps it out of "trained today".
+  t.click({ act: "finish", key: "w01-pushA" });
+  await wait(20);
+  t.nav("#today");
+  assert.doesNotMatch(t.html(), /You trained today/);
+});
+
+test("calendar logs the next session on a past day", async () => {
+  const t = boot();
+  await wait(20);
+  const L = t.ctx.GymLogic;
+  const d = new Date(); d.setDate(d.getDate() - 3);
+  const ds = L.localDate(d);
+  t.nav("#calendar");
+  t.click({ act: "cal-day", d: ds });
+  assert.match(t.html(), /Log Push A/);
+  t.click({ act: "log-on", d: ds });
+  assert.equal(t.ctx.location.hash, "s-w01-pushA");
+  t.nav("#s-w01-pushA");
+  t.click({ act: "start", key: "w01-pushA" });
+  await wait(5);
+  assert.equal(t.store["sessions/w01-pushA"].date, ds);
+});

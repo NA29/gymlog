@@ -172,6 +172,16 @@ textarea.text-in { resize: vertical; line-height: 1.4; }
 .switch input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
 .danger-zone { display: flex; justify-content: center; }
 
+/* Date controls: a native date input laid over a label, so iOS opens its own picker. */
+.date-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.date-pick, .date-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.date-pick { height: 36px; padding: 0 12px; border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: 0.9375rem; font-weight: 500; }
+.date-pick .i { width: 16px; height: 16px; color: var(--ink-3); }
+.date-chip .i { width: 16px; height: 16px; }
+.date-pick input, .date-chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; border: 0; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.date-pick:focus-within, .date-chip:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+.day:disabled { opacity: 0.4; }
+
 /* Bottom bars */
 .bar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;

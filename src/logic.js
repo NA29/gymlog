@@ -327,13 +327,19 @@
     return Math.round((pb - pa) / 86400000);
   }
 
+  // Order by the day the workout happened, not when it was entered, so a
+  // session logged retroactively sits on its own day.
+  function byWorkoutDate(a, b) {
+    return (a.date || "").localeCompare(b.date || "") || (a.completedAt || "").localeCompare(b.completedAt || "");
+  }
+
   // Coach's week: Push A → Pull A → Legs A → Rest → Push B → Pull B → Legs B.
   // Suggest the rest day the day after a legs session; never block training.
   function todayStatus(sessions, today) {
     const done = SEQ.map((s) => sessions[s.key]).filter((d) => isDone(d) && d.date);
     const trainedToday = done.filter((d) => d.date === today);
     if (trainedToday.length) return { kind: "doneToday", sessions: trainedToday };
-    const last = done.sort((a, b) => (a.completedAt || "").localeCompare(b.completedAt || "")).pop();
+    const last = done.sort(byWorkoutDate).pop();
     if (last && /^legs/.test(last.sid) && daysBetween(last.date, today) === 1) return { kind: "rest", after: last };
     return { kind: "train" };
   }
@@ -343,6 +349,6 @@
     prescription, exerciseKind, repBounds, increment, summarize, isDone, nextSession,
     lastPerformance, suggest, describeSets, fmtNum, newSessionDoc, applyLight,
     findSessionRows, sheetRowsForSession, rowRuns, checkinRow, weekSessions, weekComplete,
-    weekProgress, checkinDraft, adjustmentFor, checkinSheetRow, localDate, daysBetween, todayStatus,
+    weekProgress, checkinDraft, adjustmentFor, checkinSheetRow, localDate, daysBetween, todayStatus, byWorkoutDate,
   };
 });

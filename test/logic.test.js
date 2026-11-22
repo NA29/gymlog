@@ -203,3 +203,17 @@ test("rest day is suggested the day after legs, never forced", () => {
   assert.equal(L.todayStatus(sessions, "2026-11-21").kind, "doneToday");
   assert.equal(L.nextSession(sessions).key, "w01-pushA");
 });
+
+test("backdated sessions count on the day they happened", () => {
+  // Legs A done on the 21st but entered on the 22nd after Pull A was entered.
+  const sessions = {
+    "w01-pullA": done(1, "pullA", [], { date: "2026-11-20", completedAt: "2026-11-20T18:00:00Z" }),
+    "w01-legsA": done(1, "legsA", [], { date: "2026-11-21", completedAt: "2026-11-22T08:00:00Z" }),
+  };
+  assert.equal(L.todayStatus(sessions, "2026-11-22").kind, "rest");
+  // A forgotten session entered today for yesterday doesn't count as training today.
+  const s2 = { "w01-pushA": done(1, "pushA", [], { date: "2026-11-21", completedAt: "2026-11-22T09:00:00Z" }) };
+  assert.equal(L.todayStatus(s2, "2026-11-22").kind, "train");
+  const order = [sessions["w01-legsA"], sessions["w01-pullA"]].sort(L.byWorkoutDate).map((d) => d.sid);
+  assert.deepEqual(order, ["pullA", "legsA"]);
+});
