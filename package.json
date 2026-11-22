@@ -1,0 +1,11 @@
+{
+  "name": "gymlog",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Phone-first logger for a 12-week push/pull/legs plan, deployed as a Claude artifact.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "npm test && node build.js"
+  },
+  "license": "MIT"
+}
